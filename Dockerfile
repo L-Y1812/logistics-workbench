@@ -1,10 +1,16 @@
-FROM nginx:alpine
+FROM node:18-alpine
 
-# 复制工作台文件到 nginx 目录
-COPY . /usr/share/nginx/html
+WORKDIR /app
 
-# 暴露端口
-EXPOSE 80
+# 先拷贝依赖清单，利用 Docker 缓存层
+COPY server/package*.json ./server/
+RUN cd server && npm install --omit=dev --no-audit --no-fund
 
-# 启动 nginx
-CMD ["nginx", "-g", "daemon off;"]
+# 拷贝应用代码
+COPY . .
+
+# Render 会自动注入 PORT，此处仅为本地运行提供默认值
+ENV PORT=3000
+EXPOSE 3000
+
+CMD ["node", "server/server.js"]
