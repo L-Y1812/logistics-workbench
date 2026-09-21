@@ -1,7 +1,7 @@
 {
   "name": "logistics-workbench-server",
-  "version": "1.0.0",
-  "description": "物流应收应付工作台后端 - 飞书多维表格API代理",
+  "version": "2.0.0",
+  "description": "物流应收应付工作台后端 - PostgreSQL 数据库存储",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "https-proxy-agent": "^7.0.6",
-    "node-fetch": "^2.3.0"
+    "pg": "^8.12.0"
   }
 }

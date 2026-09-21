@@ -5,12 +5,8 @@ services:
     buildCommand: cd server && npm install --no-audit --no-fund
     startCommand: node server/server.js
     envVars:
-      - key: FEISHU_APP_ID
+      - key: DATABASE_URL
         sync: false
-      - key: FEISHU_APP_SECRET
-        sync: false
-      - key: FEISHU_BASE_TOKEN
-        value: JOKzbxJdlaKGz0sUlsnckcb76Fi
       - key: NODE_VERSION
         value: "18"
     plan: free

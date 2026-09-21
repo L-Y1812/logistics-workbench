@@ -301,6 +301,17 @@ const ApiSync = {
   loading: false,
   recordIdMap: {},  // type -> { id: record_id }
 
+  // 统一处理响应：非 2xx 或业务 ok=false 时抛错，避免静默失败
+  async _handle(resp, action) {
+    let data = null;
+    try { data = await resp.json(); } catch (e) { /* 忽略 JSON 解析失败 */ }
+    if (!resp.ok || (data && data.ok === false)) {
+      const msg = (data && (data.error || data.message)) || ('HTTP ' + resp.status);
+      throw new Error(action + '失败: ' + msg);
+    }
+    return data || {};
+  },
+
   async checkStatus() {
     try {
       const resp = await fetch('/api/status');
@@ -319,8 +330,8 @@ const ApiSync = {
     for (const type of types) {
       try {
         const resp = await fetch(`/api/${type}`);
-        const data = await resp.json();
-        if (data.ok && data.data) {
+        const data = await this._handle(resp, `加载${type}`);
+        if (data.data) {
           this.recordIdMap[type] = {};
           result[type] = data.data.map(r => {
             if (r.record_id) {
@@ -343,27 +354,27 @@ const ApiSync = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(record)
     });
-    const data = await resp.json();
-    if (data.ok && data.data && data.data.record_id) {
+    const data = await this._handle(resp, '新增');
+    if (data.data && data.data.record_id) {
       this.recordIdMap[type] = this.recordIdMap[type] || {};
       this.recordIdMap[type][record.id] = data.data.record_id;
     }
   },
 
   async update(type, id, updates) {
-    const rid = (this.recordIdMap[type] || {})[id];
-    if (!rid) return;
-    await fetch(`/api/${type}/${rid}`, {
+    const rid = (this.recordIdMap[type] || {})[id] || id;
+    const resp = await fetch(`/api/${type}/${rid}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates)
     });
+    await this._handle(resp, '更新');
   },
 
   async delete(type, id) {
-    const rid = (this.recordIdMap[type] || {})[id];
-    if (!rid) return;
-    await fetch(`/api/${type}/${rid}`, { method: 'DELETE' });
+    const rid = (this.recordIdMap[type] || {})[id] || id;
+    const resp = await fetch(`/api/${type}/${rid}`, { method: 'DELETE' });
+    await this._handle(resp, '删除');
   },
 
   async bulkAdd(type, records) {
@@ -372,8 +383,8 @@ const ApiSync = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ records })
     });
-    const data = await resp.json();
-    if (data.ok && data.data) {
+    const data = await this._handle(resp, '批量新增');
+    if (data.data) {
       this.recordIdMap[type] = this.recordIdMap[type] || {};
       data.data.forEach((r, i) => {
         if (r.record_id && records[i]) {
@@ -384,17 +395,20 @@ const ApiSync = {
   },
 
   async bulkDelete(type, ids) {
-    const rids = ids.map(id => (this.recordIdMap[type] || {})[id]).filter(Boolean);
+    const map = this.recordIdMap[type] || {};
+    const rids = ids.map(id => map[id] || id);
     if (rids.length === 0) return;
-    await fetch(`/api/${type}/bulk-delete`, {
+    const resp = await fetch(`/api/${type}/bulk-delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recordIds: rids })
     });
+    await this._handle(resp, '批量删除');
   },
 
   async clear(type) {
-    await fetch(`/api/${type}/all`, { method: 'DELETE' });
+    const resp = await fetch(`/api/${type}/all`, { method: 'DELETE' });
+    await this._handle(resp, '清空');
   }
 };
 
@@ -422,15 +436,6 @@ const Store = {
       if (JSON.stringify(ap) !== before) dirty = true;
     }
 
-    const initFlag = localStorage.getItem('lm_initialized');
-    if (initFlag !== '1') {
-      if (!ar || ar.length === 0) { ar = this._generate('ar'); dirty = true; }
-      if (!ap || ap.length === 0) { ap = this._generate('ap'); dirty = true; }
-      if (!arf || arf.length === 0) { arf = this._generate('ar-flow'); dirty = true; }
-      if (!apf || apf.length === 0) { apf = this._generate('ap-flow'); dirty = true; }
-      localStorage.setItem('lm_initialized', '1');
-    }
-
     if (dirty) {
       this._save('ar', ar || []);
       this._save('ap', ap || []);
@@ -438,33 +443,44 @@ const Store = {
       this._save('ap-flow', apf || []);
     }
 
-    // 尝试从飞书API加载数据（异步，不阻塞首屏）
+    // 先确认后端状态：云端数据库是数据的唯一权威来源
+    // 在线时以云端数据为准（空库即空表），仅离线首次使用时生成本地示例数据
     ApiSync.checkStatus().then(ok => {
       if (!ok) {
-        console.log('[同步] API未就绪，使用本地数据');
+        console.log('[同步] 数据库未连接，使用本地数据');
         this._updateSyncBadge('offline');
+        this._seedLocalIfFirstRun();
         return;
       }
-      console.log('[同步] 飞书API已连接，正在加载远程数据...');
+      console.log('[同步] 数据库已连接，正在加载云端数据...');
       this._updateSyncBadge('syncing');
       ApiSync.loadAll().then(data => {
-        let changed = false;
-        for (const type of Object.keys(data)) {
-          if (data[type] && data[type].length >= 0) {
+        for (const type of ['ar', 'ap', 'ar-flow', 'ap-flow']) {
+          if (Array.isArray(data[type])) {
             this._save(type, data[type]);
-            changed = true;
           }
         }
-        if (changed && typeof App !== 'undefined' && App.renderCurrentPage) {
+        if (typeof App !== 'undefined' && App.renderCurrentPage) {
           App.renderCurrentPage();
         }
         this._updateSyncBadge('online');
-        console.log('[同步] 远程数据加载完成');
+        console.log('[同步] 云端数据加载完成');
       }).catch(e => {
-        console.error('[同步] 加载远程数据失败:', e);
+        console.error('[同步] 加载云端数据失败:', e);
         this._updateSyncBadge('error');
       });
     });
+  },
+
+  _seedLocalIfFirstRun() {
+    const initFlag = localStorage.getItem('lm_initialized');
+    if (initFlag === '1') return;
+    if (this._load('ar').length === 0) this._save('ar', this._generate('ar'));
+    if (this._load('ap').length === 0) this._save('ap', this._generate('ap'));
+    if (this._load('ar-flow').length === 0) this._save('ar-flow', this._generate('ar-flow'));
+    if (this._load('ap-flow').length === 0) this._save('ap-flow', this._generate('ap-flow'));
+    localStorage.setItem('lm_initialized', '1');
+    if (typeof App !== 'undefined' && App.renderCurrentPage) App.renderCurrentPage();
   },
 
   _updateSyncBadge(status) {
@@ -508,13 +524,19 @@ const Store = {
   getById(type, id) {
     return this._load(type).find(r => r.id === id);
   },
+  // Cloud write failure: log + red badge instead of silent fake success
+  _syncFail(e) {
+    console.error('[API] write failed:', e);
+    this._updateSyncBadge('error');
+  },
+
   add(type, record) {
     const data = this._load(type);
     record.id = Util.uid(type.toUpperCase().replace('-', ''));
     record.createdAt = new Date().toISOString();
     data.unshift(record);
     this._save(type, data);
-    if (ApiSync.enabled) ApiSync.create(type, record).catch(e => console.error('[API] \u65B0\u589E\u5931\u8D25:', e));
+    if (ApiSync.enabled) ApiSync.create(type, record).catch(e => this._syncFail(e));
     return record;
   },
   update(type, id, updates) {
@@ -523,19 +545,19 @@ const Store = {
     if (idx >= 0) {
       Object.assign(data[idx], updates);
       this._save(type, data);
-      if (ApiSync.enabled) ApiSync.update(type, id, updates).catch(e => console.error('[API] \u66F4\u65B0\u5931\u8D25:', e));
+      if (ApiSync.enabled) ApiSync.update(type, id, updates).catch(e => this._syncFail(e));
     }
   },
   delete(type, id) {
     const data = this._load(type).filter(r => r.id !== id);
     this._save(type, data);
-    if (ApiSync.enabled) ApiSync.delete(type, id).catch(e => console.error('[API] \u5220\u9664\u5931\u8D25:', e));
+    if (ApiSync.enabled) ApiSync.delete(type, id).catch(e => this._syncFail(e));
   },
   bulkDelete(type, ids) {
     const idSet = new Set(ids);
     const data = this._load(type).filter(r => !idSet.has(r.id));
     this._save(type, data);
-    if (ApiSync.enabled) ApiSync.bulkDelete(type, ids).catch(e => console.error('[API] \u6279\u91CF\u5220\u9664\u5931\u8D25:', e));
+    if (ApiSync.enabled) ApiSync.bulkDelete(type, ids).catch(e => this._syncFail(e));
   },
   bulkAdd(type, records) {
     const data = this._load(type);
@@ -545,12 +567,12 @@ const Store = {
       data.unshift(r);
     });
     this._save(type, data);
-    if (ApiSync.enabled) ApiSync.bulkAdd(type, records).catch(e => console.error('[API] \u6279\u91CF\u65B0\u589E\u5931\u8D25:', e));
+    if (ApiSync.enabled) ApiSync.bulkAdd(type, records).catch(e => this._syncFail(e));
     return records.length;
   },
   clear(type) {
     this._save(type, []);
-    if (ApiSync.enabled) ApiSync.clear(type).catch(e => console.error('[API] \u6E05\u7A7A\u5931\u8D25:', e));
+    if (ApiSync.enabled) ApiSync.clear(type).catch(e => this._syncFail(e));
   },
   reset() {
     this._save('ar', this._generate('ar'));

@@ -1,16 +1,14 @@
 // ============================================================
-//  物流应收应付工作台 — 后端服务
-//  功能：代理飞书多维表格 API，提供 REST 接口供前端调用
-//  数据自动同步到飞书 Base，多人共享实时同步
+//  物流应收应付工作台 — 后端服务 v2
+//  数据存储：PostgreSQL（Neon 等云数据库）
+//  前端通过 REST 接口读写，所有访问者共享同一份实时数据
 // ============================================================
 
 const express = require('express');
 const path = require('path');
-const fetch = require('node-fetch');
-const { HttpsProxyAgent } = require('https-proxy-agent');
+const { Pool } = require('pg');
 
 // 零依赖 .env 自加载：仅在未被外部注入时读取同目录 .env
-// （Docker 模式由 docker compose 的 env_file 注入，不受影响）
 (function loadEnv() {
   const envPath = path.join(__dirname, '.env');
   const fs = require('fs');
@@ -30,277 +28,105 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DATABASE_URL = process.env.DATABASE_URL || '';
 
-// ---- 代理配置（沙箱环境需要） ----
-const PROXY_URL = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || '';
-const proxyAgent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : null;
-if (proxyAgent) {
-  console.log(`[代理] 使用代理: ${PROXY_URL}`);
+if (!DATABASE_URL) {
+  console.error('[启动失败] 未配置 DATABASE_URL 环境变量');
+  process.exit(1);
 }
 
-// ---- 飞书配置 ----
-const FEISHU_APP_ID = process.env.FEISHU_APP_ID || process.env.LARKSUITE_CLI_APP_ID || '';
-const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
-const FEISHU_BASE_URL = 'https://open.feishu.cn/open-apis';
+// 云数据库（Neon 等）要求 SSL；本地库不需要
+const useSsl = !/@(localhost|127\.0\.0\.1)/.test(DATABASE_URL);
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: useSsl ? { rejectUnauthorized: false } : false,
+  max: 5,
+  connectionTimeoutMillis: 15000,
+  idleTimeoutMillis: 30000
+});
 
-// 用户访问令牌（TRAE 环境自动注入，无需 App Secret）
-const USER_ACCESS_TOKEN = process.env.LARKSUITE_CLI_USER_ACCESS_TOKEN || '';
+pool.on('error', (err) => {
+  console.error('[数据库] 空闲连接异常:', err.message);
+});
 
-// Base Token（多维表格 ID，由环境变量注入）
-const BASE_TOKEN = process.env.FEISHU_BASE_TOKEN || '';
-
-// 数据类型 → 飞书表 ID 映射
-const TABLE_MAP = {
-  'ar':       'tbl5sMMGRt9x1jlJ',  // 应收账款
-  'ap':       'tblHbFh7oNeFgzGy',  // 应付账款
-  'ar-flow':  'tblOmM3ZCR19y0ep',  // 客户流水
-  'ap-flow':  'tblJvrO0SMjCwMEj'   // 承运商流水
-};
-
-// 数据类型 → 字段映射（JS字段名 → 飞书字段名）
-const FIELD_MAP = {
-  'ar': {
-    'id': '记录ID', 'date': '日期', 'waybillNumber': '运单号',
-    'customerName': '客户名称', 'origin': '发站', 'destination': '到站',
-    'expenseCategory': '费用种类', 'amount': '金额', 'remarks': '备注',
-    'createdAt': '创建时间'
-  },
-  'ap': {
-    'id': '记录ID', 'date': '日期', 'waybillNumber': '运单号',
-    'supplierName': '承运商名称', 'origin': '发站', 'destination': '到站',
-    'expenseCategory': '费用种类', 'amount': '金额', 'remarks': '备注',
-    'createdAt': '创建时间'
-  },
-  'ar-flow': {
-    'id': '记录ID', 'date': '日期', 'waybillNumber': '运单号',
-    'customerName': '客户名称', 'paymentMethod': '付款方式',
-    'amount': '金额', 'remarks': '备注', 'createdAt': '创建时间'
-  },
-  'ap-flow': {
-    'id': '记录ID', 'date': '日期', 'waybillNumber': '运单号',
-    'supplierName': '承运商名称', 'paymentMethod': '付款方式',
-    'amount': '金额', 'remarks': '备注', 'createdAt': '创建时间'
-  }
-};
-
-// ---- 飞书 API fetch 封装（自动携带代理） ----
-async function feishuFetch(url, options = {}) {
-  if (proxyAgent) {
-    options.agent = proxyAgent;
-  }
-  return fetch(url, options);
-}
-
-// ---- Token 获取 ----
-// 优先使用用户访问令牌（TRAE 环境注入），其次用 App ID/Secret 药取 tenant_access_token
-let tokenCache = { token: '', expiresAt: 0 };
-async function getAccessToken() {
-  // 方式1: 使用环境中的用户访问令牌
-  if (USER_ACCESS_TOKEN) {
-    return { token: USER_ACCESS_TOKEN, type: 'user' };
-  }
-
-  // 方式2: 使用 App ID + App Secret 获取 tenant_access_token
-  if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
-    const now = Date.now();
-    if (tokenCache.token && now < tokenCache.expiresAt - 60000) {
-      return { token: tokenCache.token, type: 'tenant' };
-    }
-
-    const resp = await feishuFetch(`${FEISHU_BASE_URL}/auth/v3/tenant_access_token/internal`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        app_id: FEISHU_APP_ID,
-        app_secret: FEISHU_APP_SECRET
-      })
-    });
-    const data = await resp.json();
-
-    if (data.code !== 0) {
-      throw new Error(`获取token失败: ${data.msg}`);
-    }
-
-    tokenCache = {
-      token: data.tenant_access_token,
-      expiresAt: now + (data.expire * 1000)
-    };
-    console.log('[飞书] Tenant Token 已刷新，有效期', data.expire, '秒');
-    return { token: tokenCache.token, type: 'tenant' };
-  }
-
-  throw new Error('未配置飞书凭证（需要 USER_ACCESS_TOKEN 或 APP_ID+APP_SECRET）');
-}
-
-// ---- 工具函数 ----
-function toFeishuFields(type, record) {
-  const mapping = FIELD_MAP[type];
-  if (!mapping) throw new Error(`未知数据类型: ${type}`);
-  const result = {};
-  for (const [jsField, feishuField] of Object.entries(mapping)) {
-    if (record[jsField] !== undefined && record[jsField] !== null) {
-      let val = record[jsField];
-      // 金额转为数字
-      if (jsField === 'amount') val = Number(val) || 0;
-      // 创建时间转为时间戳（毫秒）
-      if (jsField === 'createdAt' && typeof val === 'string') {
-        const d = new Date(val);
-        if (!isNaN(d.getTime())) val = d.getTime();
-      }
-      result[feishuField] = val;
-    }
-  }
-  return result;
-}
-
-function fromFeishuFields(type, fields) {
-  const mapping = FIELD_MAP[type];
-  if (!mapping) throw new Error(`未知数据类型: ${type}`);
-  const result = {};
-  for (const [jsField, feishuField] of Object.entries(mapping)) {
-    if (fields[feishuField] !== undefined) {
-      let val = fields[feishuField];
-      // 金额取数字
-      if (jsField === 'amount') val = Number(val) || 0;
-      // 创建时间从时间戳转回字符串
-      if (jsField === 'createdAt' && typeof val === 'number') {
-        val = new Date(val).toISOString();
-      }
-      result[jsField] = val;
-    }
-  }
-  return result;
-}
+// 合法数据类型（对应前端 4 张表）
+const VALID_TYPES = ['ar', 'ap', 'ar-flow', 'ap-flow'];
 
 // ---- 中间件 ----
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..')));
 
+// ---- 工具 ----
+function rowToRecord(row) {
+  return Object.assign({ record_id: row.record_id }, row.data);
+}
+
+// ---- 数据库初始化 ----
+async function ensureSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS records (
+      type       TEXT NOT NULL,
+      record_id  TEXT NOT NULL,
+      data       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (type, record_id)
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_records_type ON records (type)
+  `);
+  console.log('[数据库] 表结构已就绪');
+}
+
 // ---- API 路由 ----
 
-// 检查连接状态
+// 检查数据库连接状态
 app.get('/api/status', async (req, res) => {
   try {
-    if (!USER_ACCESS_TOKEN && (!FEISHU_APP_ID || !FEISHU_APP_SECRET)) {
-      return res.json({ ok: false, error: '未配置飞书凭证' });
-    }
-    const { token, type } = await getAccessToken();
-    res.json({ ok: true, message: '飞书API连接正常', authType: type });
+    await pool.query('SELECT 1');
+    res.json({ ok: true, message: '数据库连接正常', authType: 'database' });
   } catch (e) {
     res.json({ ok: false, error: e.message });
   }
 });
 
-// 获取所有记录
+// 获取某张表的全部记录（新数据在前）
 app.get('/api/:type', async (req, res) => {
   const { type } = req.params;
-  if (!TABLE_MAP[type]) return res.status(400).json({ error: '未知数据类型' });
-
+  if (!VALID_TYPES.includes(type)) return res.status(400).json({ error: '未知数据类型' });
   try {
-    const { token } = await getAccessToken();
-    const tableId = TABLE_MAP[type];
-    let allRecords = [];
-    let pageToken = '';
-    let hasMore = true;
-
-    while (hasMore) {
-      let url = `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records?page_size=500`;
-      if (pageToken) url += `&page_token=${pageToken}`;
-
-      const resp = await feishuFetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await resp.json();
-
-      if (data.code !== 0) throw new Error(data.msg);
-
-      if (data.data.items) {
-        allRecords = allRecords.concat(
-          data.data.items.map(item => ({
-            record_id: item.record_id,
-            ...fromFeishuFields(type, item.fields)
-          }))
-        );
-      }
-      hasMore = data.data.has_more;
-      pageToken = data.data.page_token;
-    }
-
-    res.json({ ok: true, data: allRecords });
+    const result = await pool.query(
+      `SELECT record_id, data FROM records
+       WHERE type = $1
+       ORDER BY data->>'createdAt' DESC NULLS LAST, updated_at DESC`,
+      [type]
+    );
+    res.json({ ok: true, data: result.rows.map(rowToRecord) });
   } catch (e) {
     console.error(`[GET /api/${type}]`, e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// 新增记录
+// 新增记录（record_id 即业务 id，冲突时覆盖）
 app.post('/api/:type', async (req, res) => {
   const { type } = req.params;
-  if (!TABLE_MAP[type]) return res.status(400).json({ error: '未知数据类型' });
-
+  if (!VALID_TYPES.includes(type)) return res.status(400).json({ error: '未知数据类型' });
+  const body = req.body || {};
+  if (!body.id) return res.status(400).json({ error: '缺少记录 id' });
   try {
-    const { token } = await getAccessToken();
-    const tableId = TABLE_MAP[type];
-    const fields = toFeishuFields(type, req.body);
-
-    const resp = await feishuFetch(
-      `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ fields })
-      }
+    const result = await pool.query(
+      `INSERT INTO records (type, record_id, data, updated_at)
+       VALUES ($1, $2, $3::jsonb, now())
+       ON CONFLICT (type, record_id)
+       DO UPDATE SET data = EXCLUDED.data, updated_at = now()
+       RETURNING record_id, data`,
+      [type, String(body.id), JSON.stringify(body)]
     );
-    const data = await resp.json();
-
-    if (data.code !== 0) throw new Error(data.msg);
-
-    const record = {
-      record_id: data.data.record.record_id,
-      ...fromFeishuFields(type, data.data.record.fields)
-    };
-    res.json({ ok: true, data: record });
+    res.json({ ok: true, data: rowToRecord(result.rows[0]) });
   } catch (e) {
     console.error(`[POST /api/${type}]`, e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// 更新记录
-app.put('/api/:type/:recordId', async (req, res) => {
-  const { type, recordId } = req.params;
-  if (!TABLE_MAP[type]) return res.status(400).json({ error: '未知数据类型' });
-
-  try {
-    const { token } = await getAccessToken();
-    const tableId = TABLE_MAP[type];
-    const fields = toFeishuFields(type, req.body);
-
-    const resp = await feishuFetch(
-      `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records/${recordId}`,
-      {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ fields })
-      }
-    );
-    const data = await resp.json();
-
-    if (data.code !== 0) throw new Error(data.msg);
-
-    const record = {
-      record_id: data.data.record.record_id,
-      ...fromFeishuFields(type, data.data.record.fields)
-    };
-    res.json({ ok: true, data: record });
-  } catch (e) {
-    console.error(`[PUT /api/${type}/${recordId}]`, e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -308,79 +134,46 @@ app.put('/api/:type/:recordId', async (req, res) => {
 // 清空整张表（必须注册在 /:recordId 之前，避免 "all" 被当成 recordId）
 app.delete('/api/:type/all', async (req, res) => {
   const { type } = req.params;
-  if (!TABLE_MAP[type]) return res.status(400).json({ error: '未知数据类型' });
-
+  if (!VALID_TYPES.includes(type)) return res.status(400).json({ error: '未知数据类型' });
   try {
-    const { token } = await getAccessToken();
-    const tableId = TABLE_MAP[type];
-
-    // 先分页拉取全部 record_id
-    const recordIds = [];
-    let pageToken = '';
-    let hasMore = true;
-    while (hasMore) {
-      let url = `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records?page_size=500`;
-      if (pageToken) url += `&page_token=${pageToken}`;
-
-      const resp = await feishuFetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await resp.json();
-      if (data.code !== 0) throw new Error(data.msg);
-
-      if (data.data.items) {
-        data.data.items.forEach(item => recordIds.push(item.record_id));
-      }
-      hasMore = data.data.has_more;
-      pageToken = data.data.page_token;
-    }
-
-    // 分批删除（每批最多 500 条）
-    const batchSize = 500;
-    for (let i = 0; i < recordIds.length; i += batchSize) {
-      const batch = recordIds.slice(i, i + batchSize);
-      const resp = await feishuFetch(
-        `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records/batch_delete`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ records: batch })
-        }
-      );
-      const data = await resp.json();
-      if (data.code !== 0) throw new Error(data.msg);
-    }
-
-    res.json({ ok: true, count: recordIds.length });
+    const result = await pool.query('DELETE FROM records WHERE type = $1', [type]);
+    res.json({ ok: true, deleted: result.rowCount });
   } catch (e) {
     console.error(`[DELETE /api/${type}/all]`, e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// 删除记录
+// 更新记录（部分字段合并，保留未提交的字段）
+app.put('/api/:type/:recordId', async (req, res) => {
+  const { type, recordId } = req.params;
+  if (!VALID_TYPES.includes(type)) return res.status(400).json({ error: '未知数据类型' });
+  try {
+    const result = await pool.query(
+      `UPDATE records
+       SET data = data || $3::jsonb, updated_at = now()
+       WHERE type = $1 AND record_id = $2
+       RETURNING record_id, data`,
+      [type, recordId, JSON.stringify(Object.assign({}, req.body, { id: recordId }))]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: '记录不存在' });
+    res.json({ ok: true, data: rowToRecord(result.rows[0]) });
+  } catch (e) {
+    console.error(`[PUT /api/${type}/${recordId}]`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 删除单条记录
 app.delete('/api/:type/:recordId', async (req, res) => {
   const { type, recordId } = req.params;
-  if (!TABLE_MAP[type]) return res.status(400).json({ error: '未知数据类型' });
-
+  if (!VALID_TYPES.includes(type)) return res.status(400).json({ error: '未知数据类型' });
   try {
-    const { token } = await getAccessToken();
-    const tableId = TABLE_MAP[type];
-
-    const resp = await feishuFetch(
-      `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records/${recordId}`,
-      {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      }
+    const result = await pool.query(
+      'DELETE FROM records WHERE type = $1 AND record_id = $2',
+      [type, recordId]
     );
-    const data = await resp.json();
-
-    if (data.code !== 0) throw new Error(data.msg);
-
+    if (result.rowCount === 0) return res.status(404).json({ error: '记录不存在' });
     res.json({ ok: true });
   } catch (e) {
     console.error(`[DELETE /api/${type}/${recordId}]`, e.message);
@@ -388,156 +181,69 @@ app.delete('/api/:type/:recordId', async (req, res) => {
   }
 });
 
-// 批量新增
+// 批量新增（冲突时覆盖）
 app.post('/api/:type/bulk', async (req, res) => {
   const { type } = req.params;
-  if (!TABLE_MAP[type]) return res.status(400).json({ error: '未知数据类型' });
+  if (!VALID_TYPES.includes(type)) return res.status(400).json({ error: '未知数据类型' });
+  const records = (req.body && req.body.records) || [];
+  const valid = records.filter(r => r && r.id);
 
+  const client = await pool.connect();
   try {
-    const { token } = await getAccessToken();
-    const tableId = TABLE_MAP[type];
-    const records = req.body.records || [];
-
-    // 分批处理（每批最多 500 条）
-    const batchSize = 500;
-    const results = [];
-
-    for (let i = 0; i < records.length; i += batchSize) {
-      const batch = records.slice(i, i + batchSize);
-      const fieldsList = batch.map(r => ({ fields: toFeishuFields(type, r) }));
-
-      const resp = await feishuFetch(
-        `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records/batch_create`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ records: fieldsList })
-        }
+    await client.query('BEGIN');
+    const saved = [];
+    for (const r of valid) {
+      const result = await client.query(
+        `INSERT INTO records (type, record_id, data, updated_at)
+         VALUES ($1, $2, $3::jsonb, now())
+         ON CONFLICT (type, record_id)
+         DO UPDATE SET data = EXCLUDED.data, updated_at = now()
+         RETURNING record_id, data`,
+        [type, String(r.id), JSON.stringify(r)]
       );
-      const data = await resp.json();
-
-      if (data.code !== 0) throw new Error(data.msg);
-
-      if (data.data.records) {
-        data.data.records.forEach(r => {
-          results.push({
-            record_id: r.record_id,
-            ...fromFeishuFields(type, r.fields)
-          });
-        });
-      }
+      saved.push(rowToRecord(result.rows[0]));
     }
-
-    res.json({ ok: true, data: results, count: results.length });
+    await client.query('COMMIT');
+    res.json({ ok: true, data: saved, count: saved.length });
   } catch (e) {
+    await client.query('ROLLBACK');
     console.error(`[POST /api/${type}/bulk]`, e.message);
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
 // 批量删除
 app.post('/api/:type/bulk-delete', async (req, res) => {
   const { type } = req.params;
-  if (!TABLE_MAP[type]) return res.status(400).json({ error: '未知数据类型' });
-
+  if (!VALID_TYPES.includes(type)) return res.status(400).json({ error: '未知数据类型' });
+  const recordIds = ((req.body && req.body.recordIds) || []).map(String);
+  if (recordIds.length === 0) return res.json({ ok: true, count: 0 });
   try {
-    const { token } = await getAccessToken();
-    const tableId = TABLE_MAP[type];
-    const recordIds = req.body.recordIds || [];
-
-    // 分批处理（每批最多 500 条）
-    const batchSize = 500;
-
-    for (let i = 0; i < recordIds.length; i += batchSize) {
-      const batch = recordIds.slice(i, i + batchSize);
-
-      const resp = await feishuFetch(
-        `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records/batch_delete`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ records: batch })
-        }
-      );
-      const data = await resp.json();
-
-      if (data.code !== 0) throw new Error(data.msg);
-    }
-
-    res.json({ ok: true, count: recordIds.length });
+    const result = await pool.query(
+      'DELETE FROM records WHERE type = $1 AND record_id = ANY($2::text[])',
+      [type, recordIds]
+    );
+    res.json({ ok: true, count: result.rowCount });
   } catch (e) {
     console.error(`[POST /api/${type}/bulk-delete]`, e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// 清空表（读取所有 record_id 后批量删除）
-app.delete('/api/:type/all', async (req, res) => {
-  const { type } = req.params;
-  if (!TABLE_MAP[type]) return res.status(400).json({ error: '未知数据类型' });
-
-  try {
-    const { token } = await getAccessToken();
-    const tableId = TABLE_MAP[type];
-    let allIds = [];
-    let pageToken = '';
-    let hasMore = true;
-
-    while (hasMore) {
-      let url = `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records?page_size=500&field_names=记录ID`;
-      if (pageToken) url += `&page_token=${pageToken}`;
-
-      const resp = await feishuFetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await resp.json();
-
-      if (data.code !== 0) throw new Error(data.msg);
-
-      if (data.data.items) {
-        allIds = allIds.concat(data.data.items.map(item => item.record_id));
-      }
-      hasMore = data.data.has_more;
-      pageToken = data.data.page_token;
-    }
-
-    // 批量删除
-    for (let i = 0; i < allIds.length; i += 500) {
-      const batch = allIds.slice(i, i + 500);
-      await feishuFetch(
-        `${FEISHU_BASE_URL}/bitable/v1/apps/${BASE_TOKEN}/tables/${tableId}/records/batch_delete`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ records: batch })
-        }
-      );
-    }
-
-    res.json({ ok: true, deleted: allIds.length });
-  } catch (e) {
-    console.error(`[DELETE /api/${type}/all]`, e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ---- 启动服务 ----
-app.listen(PORT, '0.0.0.0', () => {
-  const authMode = USER_ACCESS_TOKEN ? '用户令牌' : (FEISHU_APP_SECRET ? '应用凭证' : '未配置');
-  console.log('============================================');
-  console.log('  物流应收应付工作台服务已启动');
-  console.log(`  地址: http://localhost:${PORT}`);
-  console.log(`  飞书Base: ${BASE_TOKEN}`);
-  console.log(`  认证方式: ${authMode}`);
-  console.log(`  API状态: ${authMode === '未配置' ? '未配置凭证' : '已就绪'}`);
-  console.log('============================================');
-});
+ensureSchema()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log('============================================');
+      console.log('  物流应收应付工作台服务已启动（数据库模式）');
+      console.log(`  地址: http://localhost:${PORT}`);
+      console.log('  存储: PostgreSQL');
+      console.log('============================================');
+    });
+  })
+  .catch((e) => {
+    console.error('[启动失败] 数据库初始化失败:', e.message);
+    process.exit(1);
+  });
