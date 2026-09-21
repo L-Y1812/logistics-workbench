@@ -46,8 +46,8 @@ const FEISHU_BASE_URL = 'https://open.feishu.cn/open-apis';
 // 用户访问令牌（TRAE 环境自动注入，无需 App Secret）
 const USER_ACCESS_TOKEN = process.env.LARKSUITE_CLI_USER_ACCESS_TOKEN || '';
 
-// Base Token（多维表格 ID）
-const BASE_TOKEN = process.env.FEISHU_BASE_TOKEN || 'JOKzbxJdlaKGz0sUlsnckcb76Fi';
+// Base Token（多维表格 ID，由环境变量注入）
+const BASE_TOKEN = process.env.FEISHU_BASE_TOKEN || '';
 
 // 数据类型 → 飞书表 ID 映射
 const TABLE_MAP = {
