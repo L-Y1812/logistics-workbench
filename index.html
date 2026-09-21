@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>工作台</title>
+  <link rel="stylesheet" href="_shared/css/style.css?v=20260918r">
+</head>
+<body>
+<div class="app-layout">
+  <!-- ==================== Sidebar ==================== -->
+  <aside class="sidebar sidebar--simple" id="sidebar">
+    <div class="sidebar__brand sidebar__brand--simple">
+      <div class="sidebar__brand-title">工作台</div>
+    </div>
+    <nav class="sidebar__nav sidebar__nav--simple">
+      <div class="nav-item" data-page="waybill">
+        <span>运单数据</span>
+      </div>
+      <div class="nav-item" data-page="ar-report">
+        <span>应收报表</span>
+      </div>
+      <div class="nav-item" data-page="ap-report">
+        <span>应付报表</span>
+      </div>
+      <div class="nav-item" data-page="ar-list">
+        <span>应收明细</span>
+      </div>
+      <div class="nav-item" data-page="ap-list">
+        <span>应付明细</span>
+      </div>
+      <div class="nav-item" data-page="ar-flow">
+        <span>客户流水</span>
+      </div>
+      <div class="nav-item" data-page="ap-flow">
+        <span>承运商流水</span>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- ==================== Main ==================== -->
+  <div class="main">
+    <header class="main__header main__header--simple">
+      <div>
+        <div class="main__header-title" id="pageTitle">应收明细</div>
+        <div class="main__header-subtitle" id="pageSubtitle">客户费用明细管理</div>
+      </div>
+      <div class="main__header-actions">
+        <span class="sync-badge sync-badge--offline" id="syncBadge">本地模式</span>
+        <button class="btn btn--sm" id="lockBtn" onclick="App.toggleEditMode()">
+          <span id="lockIcon">&#128274;</span> <span id="lockText">解锁编辑</span>
+        </button>
+        <label class="btn btn--secondary btn--sm" style="margin:0;cursor:pointer;" id="btnImport" title="导入JSON数据文件">
+          <span>&#8681;</span> 导入全部数据
+          <input type="file" accept=".json" style="display:none;" onchange="App.importAllData(this)">
+        </label>
+        <button class="btn btn--secondary btn--sm" onclick="App.exportAllData()" id="btnExport">
+          <span>&#8681;</span> 导出全部数据
+        </button>
+        <button class="btn btn--danger btn--sm" onclick="App.clearAllData()" id="btnClear" style="display:none;">
+          <span>&#10006;</span> 清空数据
+        </button>
+        <button class="btn btn--secondary btn--sm" onclick="App.resetSampleData()" id="btnReset" style="display:none;">
+          <span>&#8635;</span> 重置示例数据
+        </button>
+      </div>
+    </header>
+
+    <main class="main__content">
+      <section class="page-section" id="page-waybill"></section>
+      <section class="page-section" id="page-ar-report"></section>
+      <section class="page-section" id="page-ap-report"></section>
+      <section class="page-section" id="page-ar-list"></section>
+      <section class="page-section" id="page-ap-list"></section>
+      <section class="page-section" id="page-ar-flow"></section>
+      <section class="page-section" id="page-ap-flow"></section>
+    </main>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modalBox"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="_shared/js/echarts.min.js"></script>
+<script src="_shared/js/app.js?v=20260918r"></script>
+</body>
+</html>

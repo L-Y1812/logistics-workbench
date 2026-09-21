@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: logistics-workbench
+    env: node
+    buildCommand: cd server && npm install --no-audit --no-fund
+    startCommand: node server/server.js
+    envVars:
+      - key: FEISHU_APP_ID
+        sync: false
+      - key: FEISHU_APP_SECRET
+        sync: false
+      - key: FEISHU_BASE_TOKEN
+        value: JOKzbxJdlaKGz0sUlsnckcb76Fi
+      - key: NODE_VERSION
+        value: 18.20.4

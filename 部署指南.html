@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作台 - 飞书同步部署指南</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    line-height: 1.8;
+    padding: 0;
+  }
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+  h1 {
+    font-size: 28px;
+    color: #1a1a2e;
+    margin-bottom: 8px;
+    padding-bottom: 16px;
+    border-bottom: 3px solid #4285f4;
+  }
+  .subtitle {
+    color: #5f6368;
+    font-size: 15px;
+    margin-bottom: 32px;
+  }
+  h2 {
+    font-size: 22px;
+    color: #1a1a2e;
+    margin: 36px 0 16px;
+    padding-left: 14px;
+    border-left: 4px solid #4285f4;
+  }
+  h3 {
+    font-size: 17px;
+    color: #333;
+    margin: 24px 0 12px;
+  }
+  p { margin-bottom: 12px; color: #444; }
+  ol, ul { margin: 12px 0 16px 24px; }
+  li { margin-bottom: 8px; color: #444; }
+  .step {
+    background: #fff;
+    border-radius: 10px;
+    padding: 24px 28px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #4285f4;
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    margin-right: 10px;
+    flex-shrink: 0;
+  }
+  .step-title {
+    font-size: 19px;
+    font-weight: 600;
+    color: #1a1a2e;
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .note {
+    background: #e8f0fe;
+    border-left: 4px solid #4285f4;
+    padding: 14px 18px;
+    border-radius: 6px;
+    margin: 16px 0;
+    font-size: 14px;
+    color: #1967d2;
+  }
+  .warn {
+    background: #fef7e0;
+    border-left: 4px solid #f9ab00;
+    padding: 14px 18px;
+    border-radius: 6px;
+    margin: 16px 0;
+    font-size: 14px;
+    color: #b06000;
+  }
+  .success {
+    background: #e6f4ea;
+    border-left: 4px solid #34a853;
+    padding: 14px 18px;
+    border-radius: 6px;
+    margin: 16px 0;
+    font-size: 14px;
+    color: #137333;
+  }
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 12px 0;
+  }
+  code {
+    background: #f1f3f4;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+    color: #c5221f;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+  }
+  .flow-diagram {
+    background: #fff;
+    border-radius: 10px;
+    padding: 24px;
+    margin: 20px 0;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .flow-diagram .boxes {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .flow-box {
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 120px;
+  }
+  .flow-box--user { background: #e8f0fe; color: #1967d2; }
+  .flow-box--server { background: #fef7e0; color: #b06000; }
+  .flow-box--feishu { background: #e6f4ea; color: #137333; }
+  .flow-arrow { font-size: 20px; color: #9aa0a6; }
+  .toc {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px 28px;
+    margin-bottom: 32px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .toc-title {
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #1a1a2e;
+  }
+  .toc ol { margin: 0; padding-left: 20px; }
+  .toc li { margin-bottom: 6px; }
+  .toc a { color: #4285f4; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 8px;
+  }
+  .badge--new { background: #e6f4ea; color: #137333; }
+  .badge--required { background: #fce8e6; color: #c5221f; }
+  .table-wrap { overflow-x: auto; margin: 16px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { background: #4285f4; color: #fff; padding: 10px 14px; text-align: left; }
+  td { padding: 10px 14px; border-bottom: 1px solid #e0e0e0; }
+  tr:nth-child(even) td { background: #f8f9fa; }
+  .footer {
+    text-align: center;
+    color: #9aa0a6;
+    font-size: 13px;
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid #e0e0e0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>工作台 飞书同步部署指南</h1>
+<p class="subtitle">实现多人共享、实时数据同步的完整配置流程</p>
+
+<div class="flow-diagram">
+  <div class="boxes">
+    <div class="flow-box flow-box--user">用户浏览器<br><small>工作台前端</small></div>
+    <span class="flow-arrow">&harr;</span>
+    <div class="flow-box flow-box--server">Node.js 服务<br><small>API 代理</small></div>
+    <span class="flow-arrow">&harr;</span>
+    <div class="flow-box flow-box--feishu">飞书多维表格<br><small>数据存储</small></div>
+  </div>
+  <p style="margin-top:14px;color:#5f6368;font-size:13px;">
+    所有用户通过后端服务读写同一份飞书多维表格数据，实现实时同步
+  </p>
+</div>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#step1">创建飞书开发者应用</a></li>
+    <li><a href="#step2">配置应用权限</a></li>
+    <li><a href="#step3">获取应用凭证</a></li>
+    <li><a href="#step4">配置后端环境变量</a></li>
+    <li><a href="#step5">部署后端服务</a></li>
+    <li><a href="#step6">嵌入飞书云文档</a></li>
+    <li><a href="#step7">验证同步功能</a></li>
+    <li><a href="#troubleshooting">常见问题</a></li>
+  </ol>
+</div>
+
+<!-- ====== Step 1 ====== -->
+<div class="step" id="step1">
+  <div class="step-title"><span class="step-num">1</span>创建飞书开发者应用</div>
+  <ol>
+    <li>打开飞书开放平台：<a href="https://open.feishu.cn/app" target="_blank">https://open.feishu.cn/app</a></li>
+    <li>点击「创建企业自建应用」</li>
+    <li>填写应用名称（如：<strong>物流工作台</strong>）和描述</li>
+    <li>应用图标可上传任意图片，点击「创建」</li>
+  </ol>
+  <div class="note">
+    需要使用飞书管理员账号操作。如果不是管理员，请联系管理员协助创建。
+  </div>
+</div>
+
+<!-- ====== Step 2 ====== -->
+<div class="step" id="step2">
+  <div class="step-title"><span class="step-num">2</span>配置应用权限</div>
+  <p>应用创建后，进入「权限管理」页面，添加以下权限：</p>
+  
+  <h3>必须添加的权限</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>权限名称</th><th>权限标识</th><th>用途</th></tr>
+      <tr><td>查看多维表格</td><td><code>bitable:app:readonly</code></td><td>读取表格数据</td></tr>
+      <tr><td>编辑多维表格</td><td><code>bitable:app</code></td><td>写入/修改/删除数据</td></tr>
+    </table>
+  </div>
+
+  <h3>操作步骤</h3>
+  <ol>
+    <li>在应用详情页左侧菜单点击「权限管理」</li>
+    <li>搜索 <code>bitable</code>，找到上述两个权限</li>
+    <li>分别点击「开通」</li>
+    <li>完成后点击页面上方的「批量开通」确认</li>
+  </ol>
+
+  <div class="warn">
+    权限添加后需要管理员审批生效。如果自己是管理员，审批会自动通过。
+  </div>
+</div>
+
+<!-- ====== Step 3 ====== -->
+<div class="step" id="step3">
+  <div class="step-title"><span class="step-num">3</span>获取应用凭证</div>
+  <p>在应用详情页的「凭证与基础信息」中获取：</p>
+  <ul>
+    <li><strong>App ID</strong>：格式如 <code>cli_a1b2c3d4e5f6g7h8</code></li>
+    <li><strong>App Secret</strong>：一串随机字符串，点击「显示」后可见</li>
+  </ul>
+  <div class="note">
+    App Secret 是敏感信息，请妥善保管，不要泄露给无关人员。
+  </div>
+</div>
+
+<!-- ====== Step 4 ====== -->
+<div class="step" id="step4">
+  <div class="step-title"><span class="step-num">4</span>配置后端环境变量</div>
+
+  <h3>方式 A：TRAE 环境（自动认证）</h3>
+  <p>在 TRAE 环境中，飞书用户访问令牌会自动注入，<strong>无需手动配置 App Secret</strong>。</p>
+  <p>只需确保 <code>FEISHU_BASE_TOKEN</code> 正确即可，服务启动后自动使用用户令牌认证。</p>
+
+  <h3>方式 B：生产环境（App ID + Secret）</h3>
+  <p>在工作台项目的 <code>server/</code> 目录下创建 <code>.env</code> 文件：</p>
+  <pre><code># 复制示例文件
+cp server/.env.example server/.env
+
+# 然后编辑 .env 文件，填入你的凭证
+FEISHU_APP_ID=cli_a1b2c3d4e5f6g7h8
+FEISHU_APP_SECRET=你的AppSecret
+FEISHU_BASE_TOKEN=JOKzbxJdlaKGz0sUlsnckcb76Fi
+PORT=3000</code></pre>
+
+  <div class="note">
+    <strong>FEISHU_BASE_TOKEN</strong> 已预填好，这是已创建的飞书多维表格 ID，无需修改。
+    服务支持双重认证：优先使用环境中的用户令牌，其次使用 App ID + Secret 获取 tenant_access_token。
+  </div>
+</div>
+
+<!-- ====== Step 5 ====== -->
+<div class="step" id="step5">
+  <div class="step-title"><span class="step-num">5</span>部署后端服务</div>
+
+  <h3>方式 A：Docker 部署（推荐）</h3>
+  <pre><code># 在项目根目录执行
+bash start.sh
+
+# 或者手动操作
+docker compose up -d --build
+
+# 查看运行日志
+docker compose logs -f
+
+# 停止服务
+docker compose down</code></pre>
+  <p>启动后访问 <code>http://localhost:8080</code>（端口映射 8080 &rarr; 3000）。</p>
+
+  <h3>方式 B：Node.js 直接运行</h3>
+  <pre><code># 进入 server 目录
+cd server
+
+# 安装依赖（首次运行）
+npm install
+
+# 启动服务
+node server.js
+
+# 或者用 start.sh 脚本
+bash ../start.sh</code></pre>
+  <p>启动后访问 <code>http://localhost:3000</code>。</p>
+
+  <h3>方式 C：仅前端模式（无同步）</h3>
+  <p>如果未配置飞书凭证或未安装 Node.js/Docker，工作台会自动降级为本地模式：</p>
+  <pre><code># 使用 Python
+python3 -m http.server 8080</code></pre>
+  <p>此模式下数据仅保存在浏览器本地，无法多人共享同步。</p>
+
+  <div class="warn">
+    部署到服务器时，请确保 3000 端口（或映射后的端口）可被外部访问。
+    如果使用反向代理（如 Nginx），需要将 API 请求代理到后端服务。
+  </div>
+</div>
+
+<!-- ====== Step 6 ====== -->
+<div class="step" id="step6">
+  <div class="step-title"><span class="step-num">6</span>嵌入飞书云文档</div>
+  <p>后端服务运行后，可以将工作台嵌入飞书云文档中，方便团队成员访问：</p>
+  
+  <h3>方法 1：嵌入飞书文档</h3>
+  <ol>
+    <li>在飞书中新建一个文档（或打开已有文档）</li>
+    <li>在文档中输入 <code>/</code> 打开命令面板</li>
+    <li>搜索并选择「嵌入网页」</li>
+    <li>输入工作台访问地址（如 <code>http://your-server:8080</code>）</li>
+    <li>点击「嵌入」</li>
+  </ol>
+
+  <h3>方法 2：分享链接</h3>
+  <ol>
+    <li>确保工作台服务已部署并可通过网络访问</li>
+    <li>将访问地址分享给团队成员</li>
+    <li>团队成员在浏览器中打开即可使用</li>
+  </ol>
+
+  <div class="note">
+    嵌入飞书文档时，如果服务部署在内网，飞书客户端需要能访问到该地址。
+    如果部署在公网服务器上，则任何有链接的人都可以访问。
+  </div>
+</div>
+
+<!-- ====== Step 7 ====== -->
+<div class="step" id="step7">
+  <div class="step-title"><span class="step-num">7</span>验证同步功能</div>
+  <ol>
+    <li>打开工作台，右上角应显示绿色「<strong>已同步</strong>」徽章</li>
+    <li>如果显示灰色「本地模式」，说明后端未启动或凭证未配置</li>
+    <li>如果显示红色「同步失败」，检查后端日志和飞书应用权限</li>
+    <li>在工作台新增一条记录，然后在飞书多维表格中确认数据已同步</li>
+    <li>在另一个浏览器/设备上打开工作台，确认能看到刚才新增的数据</li>
+  </ol>
+
+  <div class="success">
+    如果以上步骤全部通过，说明同步功能已正常工作！所有用户的数据变更将实时同步到飞书多维表格，多人共享同一份数据。
+  </div>
+</div>
+
+<!-- ====== Troubleshooting ====== -->
+<div class="step" id="troubleshooting">
+  <div class="step-title" style="color:#c5221f;">常见问题排查</div>
+
+  <h3>1. 徽章显示「本地模式」</h3>
+  <ul>
+    <li>检查后端服务是否正在运行：<code>docker compose ps</code> 或 <code>ps aux | grep node</code></li>
+    <li>检查 <code>.env</code> 文件中的 <code>FEISHU_APP_ID</code> 和 <code>FEISHU_APP_SECRET</code> 是否已正确填写</li>
+    <li>打开浏览器控制台（F12），查看 Network 请求 <code>/api/status</code> 的响应</li>
+  </ul>
+
+  <h3>2. 徽章显示「同步失败」</h3>
+  <ul>
+    <li>查看后端控制台日志，检查错误信息</li>
+    <li>确认飞书应用权限已添加并审批通过</li>
+    <li>确认 <code>FEISHU_BASE_TOKEN</code> 正确（多维表格 URL 中 <code>/base/</code> 后的部分）</li>
+    <li>确认飞书应用已被添加为多维表格的协作者（在多维表格右上角「...」&rarr;「更多」&rarr;「添加协作者」中添加应用）</li>
+  </ul>
+
+  <h3>3. 数据未同步到飞书</h3>
+  <ul>
+    <li>检查浏览器控制台是否有 <code>[API]</code> 开头的错误日志</li>
+    <li>确认应用有 <code>bitable:app</code>（编辑多维表格）权限</li>
+    <li>在飞书多维表格中直接查看数据是否已写入</li>
+  </ul>
+
+  <h3>4. 嵌入飞书文档后无法访问</h3>
+  <ul>
+    <li>飞书嵌入网页要求目标地址支持 HTTPS（生产环境）</li>
+    <li>如果是内网地址，确保飞书客户端与服务器在同一网络</li>
+    <li>检查服务器防火墙是否放行对应端口</li>
+  </ul>
+
+  <h3>5. 添加飞书应用为多维表格协作者</h3>
+  <p>飞书应用需要被添加为多维表格的协作者才能读写数据：</p>
+  <ol>
+    <li>打开飞书多维表格</li>
+    <li>点击右上角「...」&rarr;「更多」&rarr;「添加协作者」</li>
+    <li>搜索你的应用名称（如「物流工作台」）</li>
+    <li>添加为协作者，权限选择「可编辑」</li>
+  </ol>
+</div>
+
+<div class="footer">
+  工作台 飞书同步部署指南 | 如有问题请联系管理员
+</div>
+
+</div>
+</body>
+</html>
