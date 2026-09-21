@@ -12,4 +12,5 @@ services:
       - key: FEISHU_BASE_TOKEN
         value: JOKzbxJdlaKGz0sUlsnckcb76Fi
       - key: NODE_VERSION
-        value: 18.20.4
+        value: "18"
+    plan: free
